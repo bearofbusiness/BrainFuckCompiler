@@ -1,3 +1,7 @@
 /.zig-cache
 /out
 /zig-out
+*.o
+output
+.zigbf/zigged.zig
+src/bftest.zig
