@@ -1,4 +1,7 @@
 const std = @import("std");
+const simargs = @import("simargs");
+
+const print = std.debug.print;
 
 const stdout_file = std.io.getStdOut().writer();
 var bw = std.io.bufferedWriter(stdout_file);
@@ -12,24 +15,60 @@ pub fn main() !void {
     var deleteDir = true;
     const cwd = std.fs.cwd();
 
-    in = try cwd.openFile("test.bf", .{ .mode = std.fs.File.OpenMode.read_only });
+    var opt = try simargs.parse(allocator, struct {
+        // Those fields declare arguments options
+        // only `output` is required, others are all optional
+        output: []const u8 = "./out",
+        help: bool = false,
 
+        // This declares option's short name
+        pub const __shorts__ = .{
+            .output = .o,
+            .help = .h,
+        };
+
+        // This declares option's help message
+        pub const __messages__ = .{
+            .output = "The new Binary to be made by default \"out\"",
+            .help = "prints this message",
+        };
+    }, "[input file]", null);
+    defer opt.deinit();
+
+    if (opt.args.help) {
+        try opt.printHelp(std.io.getStdErr().writer());
+        return;
+    }
+
+    in = cwd.openFile(opt.positional_args[0], .{ .mode = std.fs.File.OpenMode.read_only }) catch {
+        try std.io.getStdErr().writer().print("Can not find file \"{s}\"\n", .{opt.positional_args[0]});
+        return;
+    };
+
+    //check if dir exists and to not delete if it does
     cwd.makeDir(".zigbf") catch {
         _ = try std.io.getStdErr().write("./.zigbf exist will not remove after\n");
         deleteDir = false;
     };
 
+    //create temp file to write zig too
     out = try cwd.createFile(".zigbf/zigged.zig", .{ .read = true });
 
     try convertToZig(in, out);
+
     in.close();
+
     out.close();
 
     //input file
     const targetSource = ".zigbf/zigged.zig";
+
     //output dir
-    const output = "./output";
-    var cmd = std.process.Child.init(&[_][]const u8{ "zig", "build-exe", targetSource, "--name", "out", "-femit-bin=" ++ output, "-OReleaseFast" }, allocator);
+    const output = try std.fmt.allocPrint(allocator, "-femit-bin={s}", .{opt.args.output});
+    defer allocator.free(output);
+
+    //create child prosses to run compilation
+    var cmd = std.process.Child.init(&[_][]const u8{ "zig", "build-exe", targetSource, "--name", "out", output, "-OReleaseFast" }, allocator);
     try cmd.spawn();
     _ = cmd.wait() catch {
         if (cmd.stderr) |stderrCmd| {
@@ -41,12 +80,10 @@ pub fn main() !void {
         }
     };
 
-    const result: u8 = 0;
-    if (result == 0) {
-        //try cwd.deleteFile(".zigbf/zigged.zig");
-        if (deleteDir) {
-            try cwd.deleteDir(".zigbf");
-        }
+    //delete all temp files
+    try cwd.deleteFile(".zigbf/zigged.zig");
+    if (deleteDir) {
+        try cwd.deleteDir(".zigbf");
     }
 }
 
